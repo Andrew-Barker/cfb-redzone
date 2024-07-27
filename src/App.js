@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from "react";
 import backgroundImage from "./assets/images/background.webp";
 import TwitchStream from "./TwitchStream";
-import { getLiveStatus } from "./utils/twitchApi";
+import { getAuthUrl, handleRedirect, getLiveStatus, isTokenValid } from "./utils/twitchApi";
 
-// List of all potential streamers
 const allStreamers = [
   "null__p01nt3r",
   "dadbod_55",
@@ -14,36 +13,67 @@ const allStreamers = [
   "rolle",
   "MlC4H",
   "rutz12",
-  // "картофель902",
+  // "картофель902", // Commented out as it might cause issues due to non-ASCII characters
 ];
 
 function App() {
   const [liveStreams, setLiveStreams] = useState([]);
   const [error, setError] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const fetchLiveStreams = async () => {
+    const checkAuthAndFetch = async () => {
       try {
-        const liveData = await getLiveStatus(allStreamers);
-        setLiveStreams(liveData);
-        setError(null);
+        if (window.location.hash) {
+          console.log("Handling redirect...");
+          handleRedirect();
+          setIsAuthenticated(true);
+          window.history.pushState({}, document.title, window.location.pathname); // Remove hash from URL
+        } else if (isTokenValid()) {
+          console.log("Token is valid");
+          setIsAuthenticated(true);
+        } else {
+          console.log("Redirecting to Twitch for authentication...");
+          window.location = getAuthUrl();
+          return; // Stop execution here to prevent the loop
+        }
+
+        if (isAuthenticated) {
+          console.log("Fetching live streams...");
+          const liveData = await getLiveStatus(allStreamers);
+          setLiveStreams(liveData);
+          setError(null);
+        }
       } catch (err) {
-        console.error("Failed to fetch live streams:", err);
-        setError("Failed to fetch live streams. Please try again later.");
+        console.error("Authentication error:", err);
+        setError("Authentication failed. Please try again.");
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    fetchLiveStreams();
-    const intervalId = setInterval(fetchLiveStreams, 300000); // Poll every 5 minutes
+    checkAuthAndFetch();
+  }, [isAuthenticated]);
 
-    return () => clearInterval(intervalId);
-  }, []);
+  useEffect(() => {
+    let intervalId;
+    if (isAuthenticated) {
+      intervalId = setInterval(async () => {
+        try {
+          const liveData = await getLiveStatus(allStreamers);
+          setLiveStreams(liveData);
+        } catch (err) {
+          console.error("Failed to fetch live streams:", err);
+        }
+      }, 10000); // Poll every 10 seconds (10000 milliseconds)
+    }
 
-  if (error) {
-    return <div className="text-white text-center">{error}</div>;
-  }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isAuthenticated]);
 
-  // Function to determine grid columns based on number of live streams
   const getGridColumns = () => {
     const count = liveStreams.length;
     if (count <= 1) return "grid-cols-1";
@@ -51,6 +81,14 @@ function App() {
     if (count <= 4) return "grid-cols-1 md:grid-cols-2 lg:grid-cols-2";
     return "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
   };
+
+  if (isLoading) {
+    return <div className="text-white text-center">Loading...</div>;
+  }
+
+  if (error) {
+    return <div className="text-white text-center">{error}</div>;
+  }
 
   return (
     <div className="min-h-screen bg-cover bg-center bg-no-repeat bg-fixed flex items-center" style={{ backgroundImage: `url(${backgroundImage})` }}>

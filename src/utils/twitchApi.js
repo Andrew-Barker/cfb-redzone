@@ -2,41 +2,64 @@
 import axios from "axios";
 
 const clientId = process.env.REACT_APP_TWITCH_CLIENT_ID;
-const clientSecret = process.env.REACT_APP_TWITCH_CLIENT_SECRET;
+const redirectUri = process.env.REACT_APP_TWITCH_REDIRECT_URI;
+const scope = "user:read:email"; // Add any other scopes you need
 
-let accessToken = null;
-let tokenExpirationTime = 0;
+let accessToken = localStorage.getItem("twitch_access_token");
+let tokenExpirationTime = localStorage.getItem("twitch_token_expiry");
 
-const getNewAccessToken = async () => {
-  const response = await axios.post(
-    "https://id.twitch.tv/oauth2/token",
-    new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: "client_credentials",
-    }),
-    {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-    }
-  );
+export function getAuthUrl() {
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "token",
+    scope: scope,
+  });
 
-  accessToken = response.data.access_token;
-  // Set expiration time to 2 hours (7200 seconds)
-  tokenExpirationTime = Date.now() + 2 * 60 * 60 * 1000; // 2 hours in milliseconds
-  return accessToken;
-};
+  return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
+}
 
-export const getAccessToken = async () => {
+export function handleRedirect() {
+  const hash = window.location.hash.substring(1);
+  console.log("Hash received from Twitch:", hash);
+  const params = new URLSearchParams(hash);
+
+  accessToken = params.get("access_token");
+  let expiresIn = params.get("expires_in");
+
+  console.log("Access Token:", accessToken);
+  console.log("Expires In:", expiresIn);
+
+  // Fallback if expires_in is missing
+  if (!expiresIn) {
+    console.warn("Expires In is missing, setting default expiration of 1 hour.");
+    expiresIn = 3600; // Default to 1 hour
+  }
+
+  if (accessToken && expiresIn) {
+    tokenExpirationTime = Date.now() + parseInt(expiresIn, 10) * 1000;
+    localStorage.setItem("twitch_access_token", accessToken);
+    localStorage.setItem("twitch_token_expiry", tokenExpirationTime);
+    return accessToken;
+  } else {
+    throw new Error("Failed to get access token");
+  }
+}
+
+export function isTokenValid() {
+  return accessToken && Date.now() < tokenExpirationTime;
+}
+
+export async function getAccessToken() {
   if (!accessToken || Date.now() >= tokenExpirationTime) {
-    return getNewAccessToken();
+    throw new Error("No valid access token");
   }
   return accessToken;
-};
+}
 
-export const getLiveStatus = async (channels) => {
-  const chunkSize = 100; // Twitch allows up to 100 user_login parameters per request
+export async function getLiveStatus(channels) {
+  const token = await getAccessToken();
+  const chunkSize = 100;
   const allLiveData = [];
 
   for (let i = 0; i < channels.length; i += chunkSize) {
@@ -44,41 +67,16 @@ export const getLiveStatus = async (channels) => {
     const params = new URLSearchParams();
     channelChunk.forEach((channel) => params.append("user_login", channel));
 
-    try {
-      const token = await getAccessToken();
-      const response = await axios.get("https://api.twitch.tv/helix/streams", {
-        headers: {
-          "Client-ID": clientId,
-          Authorization: `Bearer ${token}`,
-        },
-        params: params,
-      });
+    const response = await axios.get("https://api.twitch.tv/helix/streams", {
+      headers: {
+        "Client-ID": clientId,
+        Authorization: `Bearer ${token}`,
+      },
+      params: params,
+    });
 
-      allLiveData.push(...response.data.data);
-    } catch (error) {
-      if (error.response && error.response.status === 401) {
-        // Token might be expired, try to get a new one and retry the request
-        accessToken = null; // Reset the token
-        try {
-          const newToken = await getAccessToken();
-          const retryResponse = await axios.get("https://api.twitch.tv/helix/streams", {
-            headers: {
-              "Client-ID": clientId,
-              Authorization: `Bearer ${newToken}`,
-            },
-            params: params,
-          });
-          allLiveData.push(...retryResponse.data.data);
-        } catch (retryError) {
-          console.error("Error after token refresh:", retryError);
-          throw retryError;
-        }
-      } else {
-        console.error("Error fetching live status:", error);
-        throw error;
-      }
-    }
+    allLiveData.push(...response.data.data);
   }
 
   return allLiveData;
-};
+}

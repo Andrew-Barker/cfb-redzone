@@ -16,11 +16,39 @@ const allStreamers = [
   // "картофель902", // Commented out as it might cause issues due to non-ASCII characters
 ];
 
+const loadLiveStreamsFromLocalStorage = () => {
+  const data = localStorage.getItem("live_streams");
+  if (data) {
+    const parsedData = JSON.parse(data);
+    return parsedData.sort((a, b) => a.user_login.localeCompare(b.user_login, undefined, { sensitivity: "base" }));
+  }
+  return [];
+};
+
+const saveLiveStreamsToLocalStorage = (streams) => {
+  localStorage.setItem("live_streams", JSON.stringify(streams));
+};
+
 function App() {
-  const [liveStreams, setLiveStreams] = useState([]);
+  const [liveStreams, setLiveStreams] = useState(loadLiveStreamsFromLocalStorage());
   const [error, setError] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  const updateLiveStreams = async () => {
+    try {
+      const liveData = await getLiveStatus(allStreamers);
+      const sortedLiveData = liveData.sort((a, b) => a.user_login.localeCompare(b.user_login, undefined, { sensitivity: "base" }));
+      if (JSON.stringify(sortedLiveData) !== JSON.stringify(liveStreams)) {
+        setLiveStreams(sortedLiveData);
+        saveLiveStreamsToLocalStorage(sortedLiveData);
+      }
+      setError(null);
+    } catch (err) {
+      console.error("Failed to fetch live streams:", err);
+      setError("Failed to fetch live streams. Please try again later.");
+    }
+  };
 
   useEffect(() => {
     const checkAuthAndFetch = async () => {
@@ -41,9 +69,7 @@ function App() {
 
         if (isAuthenticated) {
           console.log("Fetching live streams...");
-          const liveData = await getLiveStatus(allStreamers);
-          setLiveStreams(liveData);
-          setError(null);
+          await updateLiveStreams();
         }
       } catch (err) {
         console.error("Authentication error:", err);
@@ -60,19 +86,14 @@ function App() {
     let intervalId;
     if (isAuthenticated) {
       intervalId = setInterval(async () => {
-        try {
-          const liveData = await getLiveStatus(allStreamers);
-          setLiveStreams(liveData);
-        } catch (err) {
-          console.error("Failed to fetch live streams:", err);
-        }
-      }, 10000); // Poll every 10 seconds (10000 milliseconds)
+        await updateLiveStreams();
+      }, 300000); // Poll every 5 minutes
     }
 
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, liveStreams]);
 
   const getGridColumns = () => {
     const count = liveStreams.length;

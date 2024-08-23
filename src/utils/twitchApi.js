@@ -1,4 +1,3 @@
-// src/utils/twitchApi.js
 import axios from "axios";
 
 const clientId = process.env.REACT_APP_TWITCH_CLIENT_ID;
@@ -19,7 +18,7 @@ export function getAuthUrl() {
   return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
 }
 
-export function handleRedirect() {
+export async function handleRedirect() {
   const hash = window.location.hash.substring(1);
   console.log("Hash received from Twitch:", hash);
   const params = new URLSearchParams(hash);
@@ -40,9 +39,33 @@ export function handleRedirect() {
     tokenExpirationTime = Date.now() + parseInt(expiresIn, 10) * 1000;
     localStorage.setItem("twitch_access_token", accessToken);
     localStorage.setItem("twitch_token_expiry", tokenExpirationTime);
+
+    // Fetch user information and store the username
+    await fetchUserInfo(accessToken);
+
     return accessToken;
   } else {
     throw new Error("Failed to get access token");
+  }
+}
+
+async function fetchUserInfo(token) {
+  try {
+    const response = await axios.get("https://api.twitch.tv/helix/users", {
+      headers: {
+        "Client-ID": clientId,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const user = response.data.data[0]; // Assuming the response contains user data
+    if (user) {
+      const username = user.login; // Get the Twitch username
+      localStorage.setItem("twitch_username", username); // Store the username in local storage
+      console.log("Twitch Username:", username);
+    }
+  } catch (error) {
+    console.error("Failed to fetch user info:", error);
   }
 }
 
